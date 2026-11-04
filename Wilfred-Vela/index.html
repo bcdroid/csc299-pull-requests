@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Constellation Maker</title>
+<style>
+  :root { --sky: #070b1a; --ink: #e8ecff; --muted: #8a93b8; --accent: #ffd27a; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--sky); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  .panel { position: fixed; top: 16px; left: 16px; right: 16px; display: flex; flex-wrap: wrap;
+    align-items: center; gap: 8px; pointer-events: none; }
+  .panel > * { pointer-events: auto; }
+  h1 { font-size: 1.1rem; font-weight: 600; margin: 0 8px 0 0; letter-spacing: .04em; }
+  h1 span { color: var(--accent); }
+  button { font: 600 .8rem system-ui, sans-serif; color: var(--ink); background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.2); border-radius: 999px; padding: 7px 14px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  label { font-size: .8rem; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .hint { position: fixed; bottom: 16px; left: 0; right: 0; text-align: center; color: var(--muted);
+    font-size: .85rem; pointer-events: none; padding: 0 16px; }
+  .count { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .8rem; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="panel">
+  <h1>Constellation <span>Maker</span></h1>
+  <button id="random" type="button">Scatter stars</button>
+  <button id="undo" type="button">Undo</button>
+  <button id="clear" type="button">Clear sky</button>
+  <label>Link distance <input id="dist" type="range" min="60" max="260" value="150"></label>
+  <span class="count" id="count">0 stars · 0 links</span>
+</div>
+<div class="hint">Click or tap to place a star. Drag to paint a trail of stars. Nearby stars link into constellations.</div>
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+let W, H, dpr;
+const stars = [];
+const bg = [];          // faint background stars
+const sparks = [];      // little bursts when a star is placed
+let linkDist = 150;
+let mouse = { x: -999, y: -999, down: false, lastX: 0, lastY: 0 };
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  bg.length = 0;
+  for (let i = 0; i < Math.round(W * H / 3000); i++)
+    bg.push({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 0.9 + 0.2, p: Math.random() * 6.28 });
+}
+
+function addStar(x, y) {
+  const hue = 200 + Math.random() * 60 + (Math.random() < 0.2 ? 140 : 0);
+  stars.push({ x, y, r: Math.random() * 1.8 + 1.6, hue, phase: Math.random() * 6.28, born: performance.now() });
+  for (let i = 0; i < 10; i++) {
+    const a = Math.random() * 6.28, s = Math.random() * 2 + 0.5;
+    sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1 });
+  }
+  updateCount();
+}
+
+function links() {
+  const out = [];
+  for (let i = 0; i < stars.length; i++)
+    for (let j = i + 1; j < stars.length; j++) {
+      const d = Math.hypot(stars[i].x - stars[j].x, stars[i].y - stars[j].y);
+      if (d < linkDist) out.push([stars[i], stars[j], d]);
+    }
+  return out;
+}
+
+function updateCount() {
+  const n = links().length;
+  document.getElementById("count").textContent = `${stars.length} star${stars.length === 1 ? "" : "s"} · ${n} link${n === 1 ? "" : "s"}`;
+}
+
+function draw(t) {
+  ctx.fillStyle = "#070b1a";
+  ctx.fillRect(0, 0, W, H);
+
+  for (const s of bg) {
+    ctx.globalAlpha = 0.35 + 0.35 * Math.sin(t / 900 + s.p);
+    ctx.fillStyle = "#cfd6ff";
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 6.28); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.lineWidth = 1;
+  for (const [a, b, d] of links()) {
+    const grow = Math.min(1, (t - Math.max(a.born, b.born)) / 500);
+    ctx.strokeStyle = `rgba(255, 210, 122, ${(1 - d / linkDist) * 0.7 * grow})`;
+    ctx.beginPath(); ctx.moveTo(a.x, a.y);
+    ctx.lineTo(a.x + (b.x - a.x) * grow, a.y + (b.y - a.y) * grow); ctx.stroke();
+  }
+
+  // links to the cursor preview
+  for (const s of stars) {
+    const d = Math.hypot(s.x - mouse.x, s.y - mouse.y);
+    if (d < linkDist) {
+      ctx.strokeStyle = `rgba(255,255,255,${(1 - d / linkDist) * 0.25})`;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(mouse.x, mouse.y); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  for (const s of stars) {
+    const tw = 0.75 + 0.25 * Math.sin(t / 400 + s.phase);
+    const pop = Math.min(1, (t - s.born) / 250);
+    const r = s.r * tw * (0.5 + pop * 0.5);
+    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 7);
+    g.addColorStop(0, `hsla(${s.hue}, 100%, 85%, ${0.55 * tw})`);
+    g.addColorStop(1, `hsla(${s.hue}, 100%, 70%, 0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(s.x, s.y, r * 7, 0, 6.28); ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 6.28); ctx.fill();
+  }
+
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const p = sparks[i];
+    p.x += p.vx; p.y += p.vy; p.vx *= 0.94; p.vy *= 0.94; p.life -= 0.03;
+    if (p.life <= 0) { sparks.splice(i, 1); continue; }
+    ctx.fillStyle = `rgba(255, 220, 150, ${p.life})`;
+    ctx.fillRect(p.x, p.y, 1.5, 1.5);
+  }
+
+  requestAnimationFrame(draw);
+}
+
+function point(e) { return { x: e.clientX, y: e.clientY }; }
+canvas.addEventListener("pointerdown", e => {
+  const p = point(e);
+  mouse.down = true; mouse.lastX = p.x; mouse.lastY = p.y;
+  addStar(p.x, p.y);
+});
+canvas.addEventListener("pointermove", e => {
+  const p = point(e);
+  mouse.x = p.x; mouse.y = p.y;
+  if (mouse.down && Math.hypot(p.x - mouse.lastX, p.y - mouse.lastY) > 40) {
+    addStar(p.x, p.y); mouse.lastX = p.x; mouse.lastY = p.y;
+  }
+});
+window.addEventListener("pointerup", () => mouse.down = false);
+canvas.addEventListener("pointerleave", () => { mouse.x = mouse.y = -999; });
+
+document.getElementById("random").onclick = () => {
+  for (let i = 0; i < 12; i++) addStar(40 + Math.random() * (W - 80), 80 + Math.random() * (H - 140));
+};
+document.getElementById("undo").onclick = () => { stars.pop(); updateCount(); };
+document.getElementById("clear").onclick = () => { stars.length = 0; updateCount(); };
+document.getElementById("dist").oninput = e => { linkDist = +e.target.value; updateCount(); };
+
+window.addEventListener("resize", resize);
+resize();
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
